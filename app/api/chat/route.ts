@@ -2,7 +2,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { NextResponse } from "next/server";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+import { SystemMessage, HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
 
 // 1. 定义天气查询工具
 const weatherTool = tool(
@@ -39,7 +39,25 @@ export async function POST(req: Request) {
   try {
     const { messages }: { messages: ChatMessage[] } = await req.json();
     
-    // 1. 初始化模型并绑定工具
+    // 1. 获取用户地理位置 (通过 IP 自动识别)
+    let userCity = "成都"; // 默认城市
+    try {
+      // 在本地开发环境下，127.0.0.1 是查不出城市的
+      // 当你上线后，req.headers.get("x-forwarded-for") 就能拿到真实用户的 IP
+      const forwarded = req.headers.get("x-forwarded-for");
+      const clientIp = forwarded ? forwarded.split(",")[0] : "";
+      
+      // 调用免费的 IP 查询接口 (ip-api.com)
+      const ipRes = await fetch(`http://ip-api.com/json/${clientIp}?lang=zh-CN`);
+      const ipData = await ipRes.json();
+      if (ipData.status === "success" && ipData.city) {
+        userCity = ipData.city;
+      }
+    } catch (ipError) {
+      console.warn("IP Location failed, fallback to default city.", ipError);
+    }
+
+    // 2. 初始化模型并绑定工具
     const model = new ChatOpenAI({
       modelName: "deepseek-chat", // 或者 gpt-4o-mini
       temperature: 0.7,
@@ -48,11 +66,15 @@ export async function POST(req: Request) {
       },
     }).bindTools([weatherTool]);
 
-    // 2. 将传入的消息转换为 LangChain 消息格式
-    const formattedMessages = messages.map((m) => {
-      if (m.role === "user") return new HumanMessage(m.content);
-      return new AIMessage(m.content);
-    });
+    // 3. 将传入的消息转换为 LangChain 消息格式，并注入动态系统提示词
+    const currentDate = new Date().toLocaleDateString("zh-CN");
+    const formattedMessages = [
+      new SystemMessage(`你是一个贴心的 AI 助手。当前用户所在地是：${userCity}。如果用户没提城市，请默认查询${userCity}的天气。现在的时间是 ${currentDate}。`),
+      ...messages.map((m) => {
+        if (m.role === "user") return new HumanMessage(m.content);
+        return new AIMessage(m.content);
+      })
+    ];
 
     // 3. 第一次调用模型
     let response = await model.invoke(formattedMessages);
