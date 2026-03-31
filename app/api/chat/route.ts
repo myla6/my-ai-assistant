@@ -59,25 +59,52 @@ export async function POST(req: Request) {
 
     // 2. 初始化模型并绑定工具
     const model = new ChatOpenAI({
-      modelName: "deepseek-chat", // 或者 gpt-4o-mini
+      modelName: "deepseek-chat",
       temperature: 0.7,
       configuration: {
         baseURL: process.env.OPENAI_API_BASE,
       },
-    }).bindTools([weatherTool]);
+    });
+    const modelWithTools = model.bindTools([weatherTool]);
 
-    // 3. 将传入的消息转换为 LangChain 消息格式，并注入动态系统提示词
+    // 3. 检查是否需要压缩历史 (当消息超过 6 条时)
+    let optimizedMessages = [...messages];
+    let isSummarized = false;
+
+    if (messages.length > 6) {
+      console.log("History too long, starting summarization...");
+      // 取出前 4 条进行总结
+      const toSummarize = messages.slice(0, 4);
+      const remaining = messages.slice(4);
+
+      const summaryPrompt = `请将以下对话历史总结为一段简短的话（100字以内），作为后续对话的上下文。保持关键信息（如人名、地点、核心意图）齐全：
+      
+      ${toSummarize.map(m => `${m.role}: ${m.content}`).join("\n")}`;
+
+      const summaryResponse = await model.invoke([new HumanMessage(summaryPrompt)]);
+      const summary = summaryResponse.content;
+
+      // 构造优化后的消息数组：[系统摘要消息, ...剩余消息]
+      optimizedMessages = [
+        { role: "assistant", content: `[历史对话记录摘要]：${summary}` },
+        ...remaining
+      ];
+      isSummarized = true;
+      console.log("Summarization complete.");
+    }
+
+    // 4. 将消息转换为 LangChain 格式并注入动态系统提示词
     const currentDate = new Date().toLocaleDateString("zh-CN");
     const formattedMessages = [
       new SystemMessage(`你是一个贴心的 AI 助手。当前用户所在地是：${userCity}。如果用户没提城市，请默认查询${userCity}的天气。现在的时间是 ${currentDate}。`),
-      ...messages.map((m) => {
+      ...optimizedMessages.map((m) => {
         if (m.role === "user") return new HumanMessage(m.content);
         return new AIMessage(m.content);
       })
     ];
 
     // 3. 第一次调用模型
-    let response = await model.invoke(formattedMessages);
+    let response = await modelWithTools.invoke(formattedMessages);
 
     // 4. 判断模型是否想要调用工具
     if (response.tool_calls && response.tool_calls.length > 0) {
@@ -102,10 +129,13 @@ export async function POST(req: Request) {
         ...toolMessages,
       ];
       
-      response = await model.invoke(finalMessages);
+      response = await modelWithTools.invoke(finalMessages);
     }
 
-    return NextResponse.json({ content: response.content });
+    return NextResponse.json({ 
+      content: response.content,
+      newMessages: isSummarized ? optimizedMessages : null 
+    });
   } catch (e: unknown) {
     const errorMessage = e instanceof Error ? e.message : "Internal Server Error";
     console.error("Chat API Error:", e);

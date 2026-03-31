@@ -27,7 +27,12 @@ export default function ChatPage() {
       if (data.error) {
         setChatLog((prev) => [...prev, { role: "assistant", content: `Error: ${data.error}` }]);
       } else {
-        setChatLog((prev) => [...prev, { role: "assistant", content: data.content }]);
+        // 如果后端返回了优化后的消息列表（压缩过），则更新本地 log
+        if (data.newMessages) {
+          setChatLog([...data.newMessages, { role: "assistant", content: data.content }]);
+        } else {
+          setChatLog((prev) => [...prev, { role: "assistant", content: data.content }]);
+        }
       }
     } catch (error) {
       console.error("Fetch error:", error);
