@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { SystemMessage, HumanMessage, AIMessage, ToolMessage } from "@langchain/core/messages";
+import { TavilySearchResults } from "@langchain/community/tools/tavily_search";
 
 // 1. 定义天气查询工具
 const weatherTool = tool(
@@ -29,6 +30,16 @@ const weatherTool = tool(
     }),
   }
 );
+
+// 2. 定义联网搜索工具
+const searchTool = new TavilySearchResults({
+  maxResults: 5,
+  apiKey: process.env.TAVILY_API_KEY,
+  kwargs: {
+    includeAnswer: true,
+    includeRawContent: false,
+  },
+});
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -65,7 +76,7 @@ export async function POST(req: Request) {
         baseURL: process.env.OPENAI_API_BASE,
       },
     });
-    const modelWithTools = model.bindTools([weatherTool]);
+    const modelWithTools = model.bindTools([weatherTool, searchTool]);
 
     // 3. 检查是否需要压缩历史 (当消息超过 6 条时)
     let optimizedMessages = [...messages];
@@ -96,7 +107,13 @@ export async function POST(req: Request) {
     // 4. 将消息转换为 LangChain 格式并注入动态系统提示词
     const currentDate = new Date().toLocaleDateString("zh-CN");
     const formattedMessages = [
-      new SystemMessage(`你是一个贴心的 AI 助手。当前用户所在地是：${userCity}。如果用户没提城市，请默认查询${userCity}的天气。现在的时间是 ${currentDate}。`),
+      new SystemMessage(`你是一个贴心的 AI 助手。当前用户所在地是：${userCity}。如果用户没提城市，请默认查询${userCity}的天气。现在的时间是 ${currentDate}。
+
+你拥有以下能力：
+1. 查询天气信息 - 使用 get_weather 工具
+2. 联网搜索 - 使用 tavily_search_results_json 工具获取最新信息
+
+当用户询问实时信息、新闻、最新数据或你不确定的知识时，主动使用搜索工具。`),
       ...optimizedMessages.map((m) => {
         if (m.role === "user") return new HumanMessage(m.content);
         return new AIMessage(m.content);
@@ -111,9 +128,17 @@ export async function POST(req: Request) {
       const toolMessages: ToolMessage[] = [];
       
       for (const toolCall of response.tool_calls) {
+        let toolResult;
+        
         if (toolCall.name === "get_weather") {
-          // 执行工具函数 (传入工具参数)
-          const toolResult = await weatherTool.invoke(toolCall);
+          // 执行天气工具
+          toolResult = await weatherTool.invoke(toolCall);
+        } else if (toolCall.name === "tavily_search_results_json") {
+          // 执行搜索工具
+          toolResult = await searchTool.invoke(toolCall);
+        }
+        
+        if (toolResult) {
           // 构造工具返回消息
           toolMessages.push(new ToolMessage({
             tool_call_id: toolCall.id!,
