@@ -20,7 +20,7 @@ export default function ChatPage() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [userMsg] }),
+        body: JSON.stringify({ messages: [...chatLog, userMsg] }),
       });
       const data = await res.json();
 
@@ -39,11 +39,19 @@ export default function ChatPage() {
 
   return (
     <div className="max-w-2xl mx-auto p-8 min-h-screen flex flex-col font-sans">
-      <header className="mb-8 border-b pb-4">
-        <h1 className="text-3xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-teal-500">
-          我的 AI 助手
-        </h1>
-        <p className="text-gray-500 text-sm mt-1">基于 Next.js + LangChain.js</p>
+      <header className="mb-8 border-b pb-4 flex justify-between items-end">
+        <div>
+          <h1 className="text-3xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-teal-500">
+            我的 AI 助手
+          </h1>
+          <p className="text-gray-500 text-sm mt-1">基于 Next.js + LangChain.js</p>
+        </div>
+        <button
+          onClick={() => setChatLog([])}
+          className="text-xs text-gray-400 hover:text-red-500 transition-colors mb-1"
+        >
+          清除历史
+        </button>
       </header>
 
       <div className="flex-1 border rounded-xl p-6 h-[500px] overflow-y-auto mb-6 bg-white shadow-sm border-gray-100 flex flex-col gap-4">
